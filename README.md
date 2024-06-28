@@ -2,7 +2,7 @@
 This repository is of the Bee Nest scale device. This version uses a cellular 4G network for data sending, instead of the LoRaWAN network, which the old version used. 
 
 ## Hardware
-Table of all hardware used, the XBee 3 Global LTE-M/NB-IoT module shouldbe connected to the XBee Explorer Regulated board.
+Table of all hardware used, the XBee 3 Global LTE-M/NB-IoT module shouldbe connected to the XBee Explorer Regulated board. The LEDs' are routed with fiber optic cables to the external casing so that the activity of the board can be observed. Attached is a printable 3D model for said holder. 
 | Hardware               | Model         | Placement       | Link          |
 | -------------          |:-------------:| :-------------: | :-------------:|
 | Cellular module                  | XBee 3 Global LTE-M/NB-IoT       | Control box     | <a href="https://www.digi.com/products/embedded-systems/digi-xbee/cellular-modems/digi-xbee-3-global-lte-m-nb-iot">Link</a>|
