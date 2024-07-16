@@ -1,5 +1,6 @@
 {
-  "url": "",
-  "password": "",
-  "port": ""
+  "mqtt_url": "mqtt.tequ.fi",
+  "mqtt_password": "",
+  "mqtt_port": 1883,
+  "sleep_interval_ms":3600000
 }
