@@ -5,14 +5,17 @@ import time
 import network
 import ujson
 from umqtt.simple import MQTTClient
-from functions import createPayload, readData, log, configure_xbee
+from functions import create_payload, read_openscale_data, log, average
+from functions import configure_xbee, enable_secondary_uart, disable_secondary_uart
 from sys import print_exception
+import I2CSensors
+from machine import Pin
 
-boot_count = 0
-log("Main: Tequ - Bee Scale - [2024-07-16]")
-log("Configuring watchdog...")
-watchdog = machine.WDT(timeout=120000, response=machine.CLEAN_SHUTDOWN)
+log("Boot - Software tequ-bee-nest-scale-v2 - [2024-07-18]")
 
+# Initialize watchdog
+watchdog = machine.WDT(timeout=180000, response=machine.CLEAN_SHUTDOWN)
+#watchdog = machine.WDT(timeout=30000, response=machine.HARD_RESET)
 # Initialize cellular connection
 cellular = network.Cellular()
 cellular.active(True)
@@ -21,77 +24,122 @@ cellular.active(True)
 x = xbee.XBee()
 configure_xbee(x)
 
-# Start serial connection to Sparkfun Openscale
-log("Opening serial connection to SparkFun OpenScale...")
-uart = machine.UART(1, 9600)
+# Initialize secondary UART
+uart = machine.UART(1)
 
 # Read configuration file
 try:
     file = open('config.json')
-    settings = {}
     settings = ujson.loads(file.read())
-    log("Opening configuration file... OK")
 except Exception as e:
-    log("Opening configuration file... FAILED")
+    log("Boot - Opening configuration file... FAILED")
     print_exception(e)
+else:
+    log("Boot - Opening configuration file... OK")
+    log("Boot - Configuration: %s" % str(settings))
 
 # Set variables
-sleep_time_ms = int(settings["sleep_interval_ms"])
-imei = str(x.atcmd('IM'))
-client_id = imei
+boot_count = 0
+NORMAL_SLEEP_TIME_MS = int(settings["sleep_interval_ms"])
+ERROR_SLEEP_TIME_MS = 60000
+sleep_time_ms = NORMAL_SLEEP_TIME_MS
+
+wait_count = 0
+while 1:
+    wait_count = wait_count + 1
+    if cellular.isconnected():
+        log("Boot - Cellular connected - Reading Device IMEI")
+        imei = str(x.atcmd('IM'))
+
+        if len(imei) > 5:
+            break
+        else:
+            time.sleep(1)
+    else:
+        log("Boot - Waiting for cellular connection...")
+        time.sleep(1)
+
+log("Boot - Device IMEI: %s" % imei)
 server_url = settings["mqtt_url"]
-port = int(settings["mqtt_port"])
-password = settings["mqtt_password"]
+mqtt_port = int(settings["mqtt_port"])
+pw = settings["mqtt_password"]
 username = imei
 topic = "tequ/type/bee-scale/id/"+imei+"/event/data"
 
 # Initialize MQTT client
-client = MQTTClient(client_id=client_id, server=server_url, port=port, user=username, password=password, keepalive=15)
+client = MQTTClient(client_id=imei, server=server_url, port=mqtt_port, user=username, password=pw, keepalive=15)
+sensors = I2CSensors.I2CSensors(1)
 
 while True:
     try:
+        start_ticks = time.ticks_ms()
+        x.atcmd('D1', 6)  # I2C SCL
+        x.atcmd('P1', 6)  # I2C SDA
+        log("Main - Running main loop...")
         boot_count += 1
-        if not cellular.active():
-            log("Enable cellular connection")
-            cellular.active(True)
+        log("Main - Enable DCDC...")
+        x.atcmd('D0', 5)  # DIGITAL OUT HIGH
+        sensors.initializeBus()
+        sensors.scanBus()
 
-        # Enable second UART connection
-        x.atcmd('P2', 7)
-        x.atcmd('D4', 7)
-        uart.init(9600, bits=8, parity=None, stop=1, timeout=1000)
-        data = readData(uart)
+        voltage = []
+        current = []
+        power = []
+
+        for a in range(5):
+            ina260_data = sensors.readINA260()
+            voltage.append(ina260_data[0])
+            current.append(ina260_data[1])
+            power.append(ina260_data[2])
+
+        power_sensor_data = [0, 0, 0]
+        power_sensor_data[0] = average(voltage)
+        power_sensor_data[1] = average(current)
+        power_sensor_data[2] = average(power)
+
+        cellular.active(True)
+
+        enable_secondary_uart(uart, x)
+        openscale_data = read_openscale_data(uart)
+        x.atcmd('D0', 4)  # DIGITAL OUT LOW
+        log("Main - Disable DCDC...")
 
         while 1:
             if cellular.isconnected():
-                log("Cellular connected")
+                log("Main - Cellular connected")
 
-                if data is None:
-                    log("Sparkfun OpenScale sensor not working or not connected")
+                if openscale_data is None:
+                    log("Main - Sparkfun OpenScale sensor not working or not connected")
+                    break
                 else:
                     try:
-                        payload = ujson.dumps(createPayload(x, data, boot_count))
-                        log("Data packet created: %s " % str(payload))
-                        log("Connecting to MQTT server...")
+                        payload = ujson.dumps(create_payload(x, openscale_data, power_sensor_data, boot_count))
+                        log("Main - Connecting to MQTT server...")
                         client.connect()
                         client.publish(topic, payload)
-                        log("Sending data to MQTT server...OK")
-                        log("Sent payload: %s" % payload)
+                        log("Main - Sending data %s to MQTT server...OK" % payload)
+                        sleep_time_ms = NORMAL_SLEEP_TIME_MS
                     except Exception as e:
-                        log("Processing sensor data... FAILED")
+                        log("Main - Processing sensor data... FAILED")
+                        sleep_time_ms = ERROR_SLEEP_TIME_MS
                         print_exception(e)
                     finally:
                         break
             else:
-                log("Waiting for cellular connection...")
-
-        watchdog.feed()
-
+                log("Main - Waiting for cellular connection...")
+                time.sleep(1)
+    except Exception as e:
+        log("Main - Error in main loop...")
+        sleep_time_ms = ERROR_SLEEP_TIME_MS
+        print_exception(e)
     finally:
-        log("Going to sleep for %d ms..." % sleep_time_ms)
-        # Disable second UART connection
-        uart.deinit()
-        x.atcmd('P2', 0)
-        x.atcmd('D4', 0)
+        log("Main - Going to sleep for %d ms..." % sleep_time_ms)
+        disable_secondary_uart(uart, x)
+        x.atcmd('D0', 4)  # DIGITAL OUT LOW
         cellular.active(False)
+        x.atcmd('D1', 0)  # I2C SCL
+        x.atcmd('P1', 0)  # I2C SDA
+        end_ticks = time.ticks_ms()
+        log("Main - Running main loop took: %.3f seconds" % (time.ticks_diff(end_ticks, start_ticks) / 1000))
         sleep_ms = x.sleep_now(sleep_time_ms, False)
-        log("Slept %d ms, wake reason: %s" % (sleep_ms, x.wake_reason()))
+        log("Main - Slept %d ms, wake reason: %s" % (sleep_ms, x.wake_reason()))
