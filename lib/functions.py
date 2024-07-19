@@ -127,6 +127,46 @@ def disable_secondary_uart(uart_obj, xbee_obj):
         log("functions.disable_secondary_uart - Disabling UART... OK")
 
 
+def enable_DCDC(xbee_obj):
+    try:
+        xbee_obj.atcmd('D0', 5)  # DIGITAL OUT HIGH
+    except Exception as e:
+        log("functions.enable_DCDC - Enabling DC/DC... FAILED")
+        print_exception(e)
+    else:
+        log("functions.enable_DCDC - Enabling DC/DC... OK")
+
+def disable_DCDC(xbee_obj):
+    try:
+        xbee_obj.atcmd('D0', 4)  # DIGITAL OUT LOW
+    except Exception as e:
+        log("functions.enable_DCDC - Disabling DC/DC... FAILED")
+        print_exception(e)
+    else:
+        log("functions.enable_DCDC - Disabling DC/DC... OK")
+
+
+def enable_I2C(xbee_obj):
+    try:
+        xbee_obj.atcmd('D1', 6)  # I2C SCL
+        xbee_obj.atcmd('P1', 6)  # I2C SDA
+    except Exception as e:
+        log("functions.enable_I2C - Enabling I2C... FAILED")
+        print_exception(e)
+    else:
+        log("functions.enable_I2C - Enabling I2C... OK")
+
+def disable_I2C(xbee_obj):
+    try:
+        xbee_obj.atcmd('D1', 0)  # I2C SCL
+        xbee_obj.atcmd('P1', 0)  # I2C SDA
+    except Exception as e:
+        log("functions.disable_I2C - Disabling I2C... FAILED")
+        print_exception(e)
+    else:
+        log("functions.disable_I2C - Disabling I2C... OK")
+
+
 def configure_xbee(xbee_obj):
     try:
         xbee_obj.atcmd('BD', 7)

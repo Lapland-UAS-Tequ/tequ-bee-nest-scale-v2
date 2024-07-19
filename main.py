@@ -5,17 +5,14 @@ import time
 import network
 import ujson
 from umqtt.simple import MQTTClient
-from functions import create_payload, read_openscale_data, log, average
-from functions import configure_xbee, enable_secondary_uart, disable_secondary_uart
+from functions import create_payload, read_openscale_data, log, average, enable_DCDC, disable_DCDC
+from functions import configure_xbee, enable_secondary_uart, disable_secondary_uart, enable_I2C, disable_I2C
 from sys import print_exception
 import I2CSensors
-from machine import Pin
 
-log("Boot - Software tequ-bee-nest-scale-v2 - [2024-07-18]")
-
+log("Boot - Software tequ-bee-nest-scale-v2 - [2024-07-19]")
 # Initialize watchdog
 watchdog = machine.WDT(timeout=180000, response=machine.CLEAN_SHUTDOWN)
-#watchdog = machine.WDT(timeout=30000, response=machine.HARD_RESET)
 # Initialize cellular connection
 cellular = network.Cellular()
 cellular.active(True)
@@ -44,9 +41,7 @@ NORMAL_SLEEP_TIME_MS = int(settings["sleep_interval_ms"])
 ERROR_SLEEP_TIME_MS = 60000
 sleep_time_ms = NORMAL_SLEEP_TIME_MS
 
-wait_count = 0
 while 1:
-    wait_count = wait_count + 1
     if cellular.isconnected():
         log("Boot - Cellular connected - Reading Device IMEI")
         imei = str(x.atcmd('IM'))
@@ -73,12 +68,10 @@ sensors = I2CSensors.I2CSensors(1)
 while True:
     try:
         start_ticks = time.ticks_ms()
-        x.atcmd('D1', 6)  # I2C SCL
-        x.atcmd('P1', 6)  # I2C SDA
         log("Main - Running main loop...")
         boot_count += 1
-        log("Main - Enable DCDC...")
-        x.atcmd('D0', 5)  # DIGITAL OUT HIGH
+        enable_I2C(x)
+        enable_DCDC(x)
         sensors.initializeBus()
         sensors.scanBus()
 
@@ -97,12 +90,13 @@ while True:
         power_sensor_data[1] = average(current)
         power_sensor_data[2] = average(power)
 
-        cellular.active(True)
+        disable_I2C(x)
 
         enable_secondary_uart(uart, x)
         openscale_data = read_openscale_data(uart)
-        x.atcmd('D0', 4)  # DIGITAL OUT LOW
-        log("Main - Disable DCDC...")
+        disable_DCDC(x)
+        disable_secondary_uart(uart, x)
+        cellular.active(True)
 
         while 1:
             if cellular.isconnected():
@@ -135,10 +129,9 @@ while True:
     finally:
         log("Main - Going to sleep for %d ms..." % sleep_time_ms)
         disable_secondary_uart(uart, x)
-        x.atcmd('D0', 4)  # DIGITAL OUT LOW
+        disable_DCDC(x)
+        disable_I2C(x)
         cellular.active(False)
-        x.atcmd('D1', 0)  # I2C SCL
-        x.atcmd('P1', 0)  # I2C SDA
         end_ticks = time.ticks_ms()
         log("Main - Running main loop took: %.3f seconds" % (time.ticks_diff(end_ticks, start_ticks) / 1000))
         sleep_ms = x.sleep_now(sleep_time_ms, False)
